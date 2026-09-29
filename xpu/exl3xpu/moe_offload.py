@@ -37,6 +37,10 @@ import threading
 import torch
 
 _HERE = os.path.dirname(os.path.abspath(__file__))
+# EXL3_MOE_DEVICE_ALL=1: every expert of every layer this process owns lives in device memory (one arena per layer,
+# the pointer table points into it); no USM host arena, no cache, no staging. For pipeline-parallel serving, where each
+# stage's share of the experts fits its card.
+DEVICE_ALL = os.environ.get("EXL3_MOE_DEVICE_ALL", "0") == "1"
 _lib_loaded = False
 _lock = threading.Lock()
 
@@ -129,7 +133,10 @@ class ExpertStore:
         if li >= self.max_layers:
             raise RuntimeError(f"ExpertStore: more than max_layers={self.max_layers} MoE layers")
         self.layer_index[key] = li
-        h = self.X.host_alloc(self.E * self.blob).view(self.E, self.blob)
+        if DEVICE_ALL:
+            h = torch.empty((self.E, self.blob), dtype=torch.uint8, device=self.dev)
+        else:
+            h = self.X.host_alloc(self.E * self.blob).view(self.E, self.blob)
         if blobs is not None:
             h.copy_(blobs)
         self.host[key] = h

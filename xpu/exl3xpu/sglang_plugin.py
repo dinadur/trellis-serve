@@ -129,8 +129,11 @@ def _moe_store(H: int, I: int, K: int, n_experts: int):
     """Process-wide ExpertStore (one slot arena shared by all MoE layers incl. the MTP layer)."""
     global _MOE_STORE
     if _MOE_STORE is None:
-        from .moe_offload import ExpertStore
-        _MOE_STORE = ExpertStore(H, I, K, n_experts, int(os.environ.get("EXL3_MOE_SLOTS", "0")), _dev())
+        from .moe_offload import DEVICE_ALL, ExpertStore
+        slots = int(os.environ.get("EXL3_MOE_SLOTS", "0"))
+        if DEVICE_ALL and slots:
+            raise ValueError("exl3xpu: EXL3_MOE_DEVICE_ALL=1 keeps every expert on the device; set EXL3_MOE_SLOTS=0")
+        _MOE_STORE = ExpertStore(H, I, K, n_experts, slots, _dev())
         logger.info("exl3xpu: expert store: %d device slots x %d B (%.2f GB)", _MOE_STORE.n_slots, _MOE_STORE.blob,
                     _MOE_STORE.n_slots * _MOE_STORE.blob / 1e9)
     s = _MOE_STORE
@@ -451,7 +454,11 @@ def _build_classes():
             if self.key not in store.host:
                 store.add_layer(self.key)
             from .moe_offload import pack_expert
-            pack_expert(st["gate"], st["up"], st["down"], K, out=store.host_view(self.key)[e])
+            out = store.host_view(self.key)[e]
+            if out.device.type == "cpu":
+                pack_expert(st["gate"], st["up"], st["down"], K, out=out)
+            else:   # device-resident arena: pack on the CPU, one H2D copy per expert
+                out.copy_(pack_expert(st["gate"], st["up"], st["down"], K))
             layer.exl3_K = K
             layer.exl3_packed = getattr(layer, "exl3_packed", 0) + 1
             del layer.exl3_store[e]
@@ -484,9 +491,10 @@ def _build_classes():
             if want:
                 store.make_resident(self.key, want)
             layer.exl3_moe_store = store
-            logger.info("exl3xpu: %s: %d experts K=%d packed to host USM (%.3f GB), %d resident in device slots "
-                        "(%d slots free)", self.prefix, n, layer.exl3_K, n * store.blob / 1e9,
-                        store.resident_count(self.key), len(store.free_slots))
+            from .moe_offload import DEVICE_ALL
+            logger.info("exl3xpu: %s: %d experts K=%d packed to %s (%.3f GB), %d resident in device slots "
+                        "(%d slots free)", self.prefix, n, layer.exl3_K, "device memory" if DEVICE_ALL else "host USM",
+                        n * store.blob / 1e9, store.resident_count(self.key), len(store.free_slots))
 
         def apply(self, layer, dispatch_output):
             from sglang.srt.layers.moe.token_dispatcher.standard import StandardCombineInput
@@ -494,6 +502,11 @@ def _build_classes():
             tk = dispatch_output.topk_output
             flat = x.reshape(-1, x.shape[-1])
             store = layer.exl3_moe_store
+            from .moe_offload import DEVICE_ALL
+            if DEVICE_ALL:      # every expert is already in device memory: no staging, no cache
+                y = store.forward(self.key, flat, tk.topk_ids.reshape(flat.shape[0], -1),
+                                  tk.topk_weights.reshape(flat.shape[0], -1))
+                return StandardCombineInput(hidden_states=y.view_as(x))
             if flat.shape[0] >= _STAGE_MIN_M and not torch.xpu.is_current_stream_capturing() \
                     and not self.key.startswith("mtp."):
                 # prefill: stream the layer's non-resident experts through the copy engine (double buffer)
@@ -1228,6 +1241,21 @@ def activate() -> None:
         vision_xpu.install()
     except ImportError as e:  # pragma: no cover - SGLang without qwen4_exp / qwen3_vl
         logger.info("exl3xpu: vision shim not installed (%s)", e)
+    if os.environ.get("EXL3_PP_QWEN4EXP", "1") == "1":
+        try:
+            from . import pp_qwen4exp
+            pp_qwen4exp.install()
+        except ImportError as e:  # pragma: no cover - SGLang without qwen4_exp
+            logger.info("exl3xpu: qwen4_exp PP forward not installed (%s)", e)
+    if os.environ.get("EXL3_PP_HOST_STAGED", "1") == "1" and hasattr(torch, "xpu") and torch.xpu.is_available():
+        from . import pp_host_transport
+        pp_host_transport.install()
+    if os.environ.get("EXL3_SGL_REQUIRED_TOOL_FIX", "1") == "1":
+        try:
+            from . import serving_fixes
+            serving_fixes.install()
+        except ImportError as e:  # pragma: no cover
+            logger.info("exl3xpu: serving fixes not installed (%s)", e)
     _patch_mtp()
     _patch_xpu_spec_sampling()
     _patch_xpu_gdn_verify()
