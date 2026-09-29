@@ -997,6 +997,13 @@ def _patch_step_timing() -> None:
         torch.xpu.synchronize()
         k = f"graph:{getattr(self, '_exl3_owner', '?')}:{shape_key}"
         acc[k][0] += 1; acc[k][1] += _t.perf_counter() - t
+        step["replays"] = step.get("replays", 0) + 1
+        if step["replays"] % n_every == 0:      # also report without speculative decoding (no EAGLE steps)
+            from . import pp_host_transport as _pt
+            extra = _pt.timing_report()
+            logger.info("exl3xpu replay timing: " + "; ".join(
+                f"{k} n={c} {1000 * s / c:.2f} ms" for k, (c, s) in sorted(acc.items())) + (f"; {extra}" if extra else ""))
+            acc.clear()
         return r
 
     orig_init = gb.FullXPUGraphBackend.__init__

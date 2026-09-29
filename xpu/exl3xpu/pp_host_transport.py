@@ -13,6 +13,8 @@ Env: EXL3_PP_HOST_STAGED=0 disables it.
 from __future__ import annotations
 
 import logging
+import os
+import time
 
 import torch
 
@@ -20,6 +22,16 @@ logger = logging.getLogger(__name__)
 
 
 _MOVED = "__exl3_host_staged__"
+_TIMING = os.environ.get("EXL3_STEP_TIMING", "0") != "0"
+_acc = {"send": [0, 0.0], "recv": [0, 0.0]}
+
+
+def timing_report() -> str:
+    """Mean wall time of host-staged sends/recvs since the last report (EXL3_STEP_TIMING); resets the counters."""
+    out = "; ".join(f"pp_{k} n={c} {1000 * s / c:.2f} ms" for k, (c, s) in _acc.items() if c)
+    for v in _acc.values():
+        v[0], v[1] = 0, 0.0
+    return out
 
 
 def _to_host(tensor_dict: dict) -> dict:
@@ -44,16 +56,23 @@ def install() -> bool:
     orig_send, orig_recv = GC.send_tensor_dict, GC.recv_tensor_dict
 
     def send_tensor_dict(self, tensor_dict, dst=None, all_gather_group=None, async_send=False):
+        t = time.perf_counter()
         if isinstance(tensor_dict, dict) and self.world_size > 1:
             tensor_dict = _to_host(tensor_dict)
-        return orig_send(self, tensor_dict, dst=dst, all_gather_group=all_gather_group, async_send=async_send)
+        r = orig_send(self, tensor_dict, dst=dst, all_gather_group=all_gather_group, async_send=async_send)
+        if _TIMING:
+            _acc["send"][0] += 1; _acc["send"][1] += time.perf_counter() - t
+        return r
 
     def recv_tensor_dict(self, src=None, all_gather_group=None):
+        t = time.perf_counter()
         got = orig_recv(self, src=src, all_gather_group=all_gather_group)
         if isinstance(got, dict) and _MOVED in got:
             moved = set(got.pop(_MOVED))
             dev = torch.device("xpu", torch.xpu.current_device())
             got = {k: (v.to(dev) if k in moved else v) for k, v in got.items()}
+        if _TIMING:     # includes waiting for the sender
+            _acc["recv"][0] += 1; _acc["recv"][1] += time.perf_counter() - t
         return got
 
     send_tensor_dict._exl3_host = True

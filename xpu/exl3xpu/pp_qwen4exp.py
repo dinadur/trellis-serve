@@ -20,11 +20,44 @@ Env: EXL3_PP_QWEN4EXP=0 disables the patch.
 from __future__ import annotations
 
 import logging
+import os
 from typing import Any, Optional
 
 import torch
 
 logger = logging.getLogger(__name__)
+# EXL3_PP_MEM_TRACE=N: every N forwards, log torch reserved/allocated next to the driver's free device memory, per
+# stage (separates torch caching-allocator growth from memory the runtime allocates outside torch).
+_MEM_TRACE = int(os.environ.get("EXL3_PP_MEM_TRACE", "0"))
+_mem_calls = [0]
+# EXL3_TORCH_MEM_FRACTION caps the torch caching allocator on THIS stage's device. The plugin's activate() applies it
+# before SGLang binds each PP rank to its card, so it only ever capped device 0; uncapped, a later stage's cache grew to
+# 32.8 GiB reserved on a 31.9 GiB card during a 200K prefill and xe spilled buffers to system memory (then faulted).
+_CAP = os.environ.get("EXL3_TORCH_MEM_FRACTION")
+_capped = set()
+
+
+def _cap_this_device() -> None:
+    dev = torch.xpu.current_device()
+    if not _CAP or dev in _capped:
+        return
+    torch.xpu.set_per_process_memory_fraction(float(_CAP), dev)
+    _capped.add(dev)
+    logger.warning("exl3xpu: torch XPU allocator capped at %.3f of device %d (this PP stage)", float(_CAP), dev)
+
+
+def _mem_trace(model, forward_batch) -> None:
+    _mem_calls[0] += 1
+    if _mem_calls[0] % _MEM_TRACE:
+        return
+    g = 2 ** 30
+    free, total = torch.xpu.mem_get_info()
+    seq = getattr(forward_batch, "seq_lens_cpu", None)
+    ctx = int(seq.max()) if seq is not None and len(seq) else -1
+    logger.info("exl3xpu pp mem: stage %d-%d ctx %d mode %s | torch reserved %.2f allocated %.2f GiB | device free "
+                "%.2f of %.2f GiB | outside torch %.2f GiB", model.start_layer, model.end_layer, ctx,
+                forward_batch.forward_mode.name, torch.xpu.memory_reserved() / g, torch.xpu.memory_allocated() / g,
+                free / g, total / g, (total - free - torch.xpu.memory_reserved()) / g)
 
 
 def install() -> bool:
@@ -41,6 +74,8 @@ def install() -> bool:
 
     def forward(self, input_ids: torch.Tensor, positions: torch.Tensor, forward_batch: ForwardBatch,
                 inputs_embeds: Optional[torch.Tensor] = None, pp_proxy_tensors: Optional[Any] = None):
+        if _CAP and not _capped and not torch.xpu.is_current_stream_capturing():
+            _cap_this_device()
         first = self.pp_group.is_first_rank
         last = self.pp_group.is_last_rank
         if first:
@@ -75,6 +110,8 @@ def install() -> bool:
                 )
 
         q._commit_ple_batch(ple_batch, forward_batch)
+        if _MEM_TRACE and not torch.xpu.is_current_stream_capturing():
+            _mem_trace(self, forward_batch)
 
         if not last:
             if residual is not None:
