@@ -1281,6 +1281,9 @@ def activate() -> None:
     _patch_gdn_replayssm_fold()
     _patch_xpu_graph_warm_replay()
     _patch_mem_probe()
+    if os.environ.get("EXL3_PEAK_PROBE", "") in ("layers", "children"):
+        from . import peak_probe
+        peak_probe.install()
     _patch_xpu_mamba_extra_buffer()
     _patch_step_timing()
     frac = os.environ.get("EXL3_TORCH_MEM_FRACTION")
