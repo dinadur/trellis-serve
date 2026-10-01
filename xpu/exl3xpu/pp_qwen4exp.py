@@ -26,8 +26,8 @@ from typing import Any, Optional
 import torch
 
 logger = logging.getLogger(__name__)
-# EXL3_PP_MEM_TRACE=N: every N forwards, log torch reserved/allocated next to the driver's free device memory, per
-# stage (separates torch caching-allocator growth from memory the runtime allocates outside torch).
+# EXL3_PP_MEM_TRACE=N: every N forwards, log torch reserved/allocated/peak-since-last-trace next to the driver's free
+# device memory, per stage (separates torch caching-allocator growth from memory the runtime allocates outside torch).
 _MEM_TRACE = int(os.environ.get("EXL3_PP_MEM_TRACE", "0"))
 _mem_calls = [0]
 # EXL3_TORCH_MEM_FRACTION caps the torch caching allocator on THIS stage's device. The plugin's activate() applies it
@@ -54,10 +54,13 @@ def _mem_trace(model, forward_batch) -> None:
     free, total = torch.xpu.mem_get_info()
     seq = getattr(forward_batch, "seq_lens_cpu", None)
     ctx = int(seq.max()) if seq is not None and len(seq) else -1
-    logger.info("exl3xpu pp mem: stage %d-%d ctx %d mode %s | torch reserved %.2f allocated %.2f GiB | device free "
-                "%.2f of %.2f GiB | outside torch %.2f GiB", model.start_layer, model.end_layer, ctx,
+    # peak = torch max_memory_allocated since the previous trace (then reset), so transients between traces show up
+    peak = torch.xpu.max_memory_allocated() / g
+    torch.xpu.reset_peak_memory_stats()
+    logger.info("exl3xpu pp mem: stage %d-%d ctx %d mode %s | torch reserved %.2f allocated %.2f peak %.2f GiB | "
+                "device free %.2f of %.2f GiB | outside torch %.2f GiB", model.start_layer, model.end_layer, ctx,
                 forward_batch.forward_mode.name, torch.xpu.memory_reserved() / g, torch.xpu.memory_allocated() / g,
-                free / g, total / g, (total - free - torch.xpu.memory_reserved()) / g)
+                peak, free / g, total / g, (total - free - torch.xpu.memory_reserved()) / g)
 
 
 def install() -> bool:
