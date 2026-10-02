@@ -1,5 +1,11 @@
 # trellis-serve
 
+> **This fork:** Qwen3.8-Flash-Next EXL3 across two Intel Arc Pro B70s, with fixes for hosts without PCIe
+> AtomicOps or peer-to-peer DMA. Start with the [guide](docs/b70-flashnext-pp2.md) or
+> [AGENTS.md](AGENTS.md) (for coding agents). Upstream PRs:
+> [#1](https://github.com/0xSero/trellis-serve/pull/1), [#2](https://github.com/0xSero/trellis-serve/pull/2),
+> [#3](https://github.com/0xSero/trellis-serve/pull/3). Everything below is upstream's README.
+
 EXL3, the trellis quantization format from turboderp's [ExLlamaV3](https://github.com/turboderp-org/exllamav3), served
 by stock inference engines on GPUs that ExLlamaV3's own kernels don't cover well. Every kernel here decodes weights
 bit-for-bit the same as ExLlamaV3 (see [the lossless check](docs/lossless-check.md)).
