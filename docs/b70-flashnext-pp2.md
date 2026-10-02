@@ -162,13 +162,13 @@ A system-level comparison on this machine: engines, quantisation, speculative de
 
 - **A**: Qwen3.8-27B GGUF Q4_K_M + MTP draft head (3 tokens), llama.cpp SYCL, one card, f16 KV, 106K context, 2 slots sharing one KV cache.
 - **B**: Flash-Next EXL3 3.05 bpw, this branch with fixes 1–3, both cards, settings above.
-- **C**: Qwen3.8-27B EXL3 4.00 bpw + MTP (3 tokens), vLLM XPU, one card, fp8 KV.
+- **C**: Qwen3.8-27B EXL3 4.00 bpw + MTP (3 tokens), vLLM XPU, one card, fp8 KV. Its decode column comes from the
+  server's token counts: llama-benchy counts one token per streamed chunk, and vLLM with MTP streams about 2.5
+  tokens per chunk (A and B stream one), so a first version of these tables understated C's decode about 2.5×.
 
 `llama-benchy` 0.3.5: a 2,048-token prompt after the given context, 128 generated tokens, `--no-cache`, 2 runs per
 cell. Prefill and decode are per-request tokens/s; first token is in seconds and includes the context prefill. For
-two requests sent together: each one's first-token time, and the busiest one-second window of streamed tokens across
-both. At long contexts the second prefill stalls the first request, so that window shows a brief overlap, not
-sustained throughput.
+two requests sent together, each one's first-token time; at long contexts the second waits roughly one full prefill.
 
 Row marks: (a) A with a larger f16 context (135K; 139K for two 64K requests); (b) A with q8_0 KV and a 262K context
 (264K for two 128K requests); (c) warm repeat, 3 runs after a discarded warm-up, replacing cold first runs (Flash-Next
@@ -176,39 +176,39 @@ Row marks: (a) A with a larger f16 context (135K; 139K for two 64K requests); (b
 
 **A: 27B Q4_K_M + MTP, llama.cpp, one card**
 
-| context | prefill | decode | first token | 2 requests: first tokens | 2 requests: peak 1 s |
-|---|---|---|---|---|---|
-| 0 | 756 | 36.7 | 3.0 | 5.7 / 5.7 | 57.5 |
-| 8K | 920 | 32.9 | 11.4 | 21.7 / 24.8 | 50.5 |
-| 32K | 854 | 31.2 | 41.0 | 62.6 / 100.5 | 43.5 |
-| 64K (a) | 761 | 27.7 | 89.1 | 105.5 / 215.8 | 38.5 |
-| 128K (ab) | 652 | 23.2 | 204.3 | 316.0 / 735.8 | 26.5 |
-| 192K (b) | 553 | 11.6 | 359.5 | does not fit ² | — |
-| 240K (b) | 501 | 10.8 | 495.0 | does not fit ² | — |
+| context | prefill | decode | first token | 2 requests: first tokens |
+|---|---|---|---|---|
+| 0 | 756 | 36.7 | 3.0 | 5.7 / 5.7 |
+| 8K | 920 | 32.9 | 11.4 | 21.7 / 24.8 |
+| 32K | 854 | 31.2 | 41.0 | 62.6 / 100.5 |
+| 64K (a) | 761 | 27.7 | 89.1 | 105.5 / 215.8 |
+| 128K (ab) | 652 | 23.2 | 204.3 | 316.0 / 735.8 |
+| 192K (b) | 553 | 11.6 | 359.5 | does not fit ² |
+| 240K (b) | 501 | 10.8 | 495.0 | does not fit ² |
 
 **B: Flash-Next, SGLang PP=2, two cards**
 
-| context | prefill | decode | first token | 2 requests: first tokens | 2 requests: peak 1 s |
-|---|---|---|---|---|---|
-| 0 (c) | 1,633 | 28.8 | 1.5 | 1.8 / 2.5 | 50.7 |
-| 8K (c) | 2,184 | 29.1 | 4.9 | 5.4 / 9.6 | 51.0 |
-| 32K | 1,789 | 29.2 | 20.4 | 20.2 / 38.9 | 50.0 |
-| 64K | 1,378 | 28.9 | 49.9 | 50.5 / 99.8 | 51.0 |
-| 128K | 925 | 28.1 | 144.8 | 147.8 / 292.5 | 49.0 |
-| 192K | 687 | 27.6 | 290.1 | does not fit ¹ | — |
-| 240K | 592 | 27.7 | 419.3 | does not fit ¹ | — |
+| context | prefill | decode | first token | 2 requests: first tokens |
+|---|---|---|---|---|
+| 0 (c) | 1,633 | 28.8 | 1.5 | 1.8 / 2.5 |
+| 8K (c) | 2,184 | 29.1 | 4.9 | 5.4 / 9.6 |
+| 32K | 1,789 | 29.2 | 20.4 | 20.2 / 38.9 |
+| 64K | 1,378 | 28.9 | 49.9 | 50.5 / 99.8 |
+| 128K | 925 | 28.1 | 144.8 | 147.8 / 292.5 |
+| 192K | 687 | 27.6 | 290.1 | does not fit ¹ |
+| 240K | 592 | 27.7 | 419.3 | does not fit ¹ |
 
 **C: 27B EXL3 + MTP, vLLM, one card**
 
-| context | prefill | decode | first token | 2 requests: first tokens | 2 requests: peak 1 s |
-|---|---|---|---|---|---|
-| 0 (c) | 2,965 | 24.6 | 0.8 | 1.3 / 1.6 | 46.0 |
-| 8K (c) | 2,610 | 23.6 | 4.0 | 5.2 / 8.4 | 44.0 |
-| 32K | 2,235 | 21.2 | 15.7 | 15.8 / 36.0 | 36.0 |
-| 64K | 1,853 | 18.6 | 36.6 | 39.0 / 95.5 | 30.0 |
-| 128K | 1,337 | 15.2 | 99.7 | 106.1 / 285.0 | 17.5 |
-| 192K | 1,099 | 12.8 | 180.9 | does not fit ¹ | — |
-| 240K | 932 | 11.5 | 266.1 | does not fit ¹ | — |
+| context | prefill | decode | first token | 2 requests: first tokens |
+|---|---|---|---|---|
+| 0 (c) | 2,965 | 64.7 | 0.8 | 1.3 / 1.6 |
+| 8K (c) | 2,610 | 66.1 | 4.0 | 5.2 / 8.4 |
+| 32K | 2,235 | 53.7 | 15.7 | 15.8 / 36.0 |
+| 64K | 1,853 | 51.0 | 36.6 | 39.0 / 95.5 |
+| 128K | 1,337 | 40.7 | 99.7 | 106.1 / 285.0 |
+| 192K | 1,099 | 31.2 | 180.9 | does not fit ¹ |
+| 240K | 932 | 27.2 | 266.1 | does not fit ¹ |
 
 ¹ Two requests of 192K or more exceed the KV pool each server was configured with (269,952 tokens for B, 310,472 for
 C, sized for a 262K context and two requests); another configuration might fit them.
@@ -220,9 +220,10 @@ sized for one 192K request put 19.5 GiB in system memory, hence q8_0 from 192K; 
 (31.6–31.9 of 31.9 GiB, about 0.5 GiB spilled). q8_0 also decodes slower (16.8 against 23.2 tokens/s at 128K), so the
 (b) rows understate f16. The deepest context tested is 240K (the models' window is 262,144 tokens).
 
-In short: Flash-Next's decode stays at 27.6–29.2 tokens/s from 0 to 240K, while A falls from 36.7 to 23.2 by 128K and
-C from 24.6 to 11.5 by 240K. A decodes fastest at short contexts (its MTP draft head). C prefills fastest at every
-depth; Flash-Next prefills 1.8–2.4× faster than A up to 64K, 1.4× at 128K and 1.2× beyond.
+In short: C, on one card, is the fastest of the three here: it prefills fastest at every depth and decodes fastest up
+to 192K (64.7 tokens/s at 0K, 40.7 at 128K, 27.2 at 240K), helped by its MTP draft head. Flash-Next's decode is the
+flattest (28.8 at 0K, 27.7 at 240K) and roughly ties C at 240K, but it needs both cards. A decodes 36.7 tokens/s at 0K
+and 23.2 at 128K; Flash-Next prefills 1.8–2.4× faster than A up to 64K, 1.4× at 128K and 1.2× beyond.
 
 **Instruction following, IFBench-300** (same prompts, scorer and 4,096-token reasoning budget, two at a time;
 runs on different dates):
