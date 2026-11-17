@@ -16,7 +16,17 @@ if ! [[ $HOST =~ ^127\.[0-9]+\.[0-9]+\.[0-9]+$ || $HOST == localhost || $HOST ==
    && [ -z "$API_KEY_FILE" ] && [ "${ALLOW_NO_API_KEY:-0}" != 1 ]; then
   echo "refusing to serve $HOST without an API key: set API_KEY_FILE, or ALLOW_NO_API_KEY=1" >&2; exit 2
 fi
-if [ -n "$API_KEY_FILE" ] && [ ! -s "$API_KEY_FILE" ]; then echo "API key file $API_KEY_FILE is missing or empty" >&2; exit 2; fi
+if [ -n "$API_KEY_FILE" ] && ! grep -q '[^[:space:]]' "$API_KEY_FILE" 2>/dev/null; then
+  echo "API key file $API_KEY_FILE is missing or empty" >&2; exit 2
+fi
+# With a key, the container reads it, trims surrounding whitespace (as serve.py does) and refuses to start on an
+# empty result: SGLang serves without authentication when --api-key is empty. The key never enters cmd.txt.
+KEYCHECK=; KEYARG=; KEYMOUNT=()
+if [ -n "$API_KEY_FILE" ]; then
+  KEYCHECK='K=$(cat /run/serve-api-key) || exit 2; K=${K#"${K%%[![:space:]]*}"}; K=${K%"${K##*[![:space:]]}"}; [ -n "$K" ] || { echo "API key is empty" >&2; exit 2; }; '
+  KEYARG=' --api-key "$K"'
+  KEYMOUNT=(-v "$(readlink -f "$API_KEY_FILE"):/run/serve-api-key:ro")
+fi
 CARD=${CARD:-1}; PORT=${PORT:-30250}; NAME=${NAME:-ftx-srv}; IMAGE=${IMAGE:-lmsysorg/sglang:v0.5.20-xpu}
 MODEL=${MODEL:-turboderp-Qwen3.8-Flash-Next-exl3-3.05bpw_h5_ng5}
 TS=${TS:-$HOME/freetoken-exl3/kernels/xpu_bmg/trellis-serve}
@@ -24,12 +34,11 @@ X=/opt/trellis-serve/xpu/exl3xpu
 INNER="pip install -q --no-deps --no-build-isolation -e /opt/trellis-serve/core -e /opt/trellis-serve/xpu >/tmp/pip.log 2>&1 || cat /tmp/pip.log; \
 pip install -q --no-deps onednn==2026.0.0 >/dev/null 2>&1; \
 python3 -c 'import torch; print(\"card uuid\", torch.xpu.get_device_properties(0).uuid)'; \
-exec python3 -m sglang.launch_server --model-path /models/$MODEL --quantization exl3 --trust-remote-code --device xpu \
+${KEYCHECK}exec python3 -m sglang.launch_server --model-path /models/$MODEL --quantization exl3 --trust-remote-code --device xpu \
  --host $HOST --port $PORT --served-model-name flashnext --disable-shared-experts-fusion \
  --kv-cache-dtype ${KVDTYPE:-fp8_e4m3} --context-length ${CTX:-262144} --mem-fraction-static ${MEMFRAC:-0.80} \
  --chunked-prefill-size ${CHUNK:-4096} --max-running-requests ${MAXREQ:-2} --dtype bfloat16"
-# The key is read inside the container, so it never appears in cmd.txt or the docker argv.
-KEYMOUNT=(); if [ -n "$API_KEY_FILE" ]; then INNER+=' --api-key "$(cat /run/serve-api-key)"'; KEYMOUNT=(-v "$(readlink -f "$API_KEY_FILE"):/run/serve-api-key:ro"); fi
+INNER+="$KEYARG"
 for a in "$@"; do INNER+=" $(printf '%q' "$a")"; done
 docker rm -f "$NAME" >/dev/null 2>&1
 ARGV=(docker run --rm --name "$NAME" --device /dev/dri -v /dev/dri/by-path:/dev/dri/by-path -e ZE_AFFINITY_MASK=$CARD
