@@ -10,6 +10,6 @@ docker rm -f sglb70-vllm >/dev/null 2>&1 || true
 EX=(); for kv in ${VENV:-}; do EX+=(-e "$kv"); done
 docker run -d --name sglb70-vllm --device /dev/dri/$R -v "$BYP":/dev/dri/by-path:ro --shm-size 32g --network host \
   -e HF_HUB_OFFLINE=1 "${EX[@]}" -v "$HOME/models/turboderp-Qwen3.8-27B-exl3-4.00bpw":/models:ro "$IMG" \
-  models/qwen3.8-27b-exl3-4.00bpw --gpu 0 --port "$PORT" --model-path /models \
+  models/qwen3.8-27b-exl3-4.00bpw --gpu 0 --host 127.0.0.1 --port "$PORT" --model-path /models \
   -- --enable-prefix-caching --enable-auto-tool-choice --tool-call-parser qwen3_coder --reasoning-parser qwen3 ${VEXTRA:-}
-echo "vllm baseline on $PCI ($R) port $PORT"
+echo "vllm baseline on $PCI ($R) at 127.0.0.1:$PORT"
