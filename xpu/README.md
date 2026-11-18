@@ -101,7 +101,7 @@ hf download turboderp/Qwen3.8-27B-exl3 --revision 113cf7ab958054860e43fb7f3063b1
   --local-dir $MODELS/turboderp-Qwen3.8-27B-exl3-4.00bpw
 
 # one card, OpenAI API on :8000 (tool calls + reasoning parsed)
-docker run --rm --device /dev/dri -v /dev/dri/by-path:/dev/dri/by-path:ro --shm-size 32g -p 8000:8000 \
+docker run --rm --device /dev/dri -v /dev/dri/by-path:/dev/dri/by-path:ro --shm-size 32g -p 127.0.0.1:8000:8000 \
   -e HF_HUB_OFFLINE=1 -v $MODELS/turboderp-Qwen3.8-27B-exl3-4.00bpw:/models:ro $IMG \
   models/qwen3.8-27b-exl3-4.00bpw --gpu 0 --port 8000 --model-path /models \
   -- --enable-prefix-caching --enable-auto-tool-choice --tool-call-parser qwen3_coder --reasoning-parser qwen3
@@ -116,6 +116,14 @@ docker run --rm --device /dev/dri -v /dev/dri/by-path:/dev/dri/by-path:ro --shm-
 - Build it yourself from the repository root: `docker build -f xpu/docker/Dockerfile -t exl3xpu .` (base image pinned by digest), or inside any
   vLLM XPU environment with oneAPI 2025.3: `pip install -e core && cd xpu && scripts/build_ext.sh && pip install -e .`.
 - Both cards as two replicas behind a proxy: `... models/qwen3.8-27b-exl3-4.00bpw --dp --model-path /models`.
+- Network exposure: `serve.py` and `lb.py` listen on 127.0.0.1 unless told otherwise, and `serve.py` refuses any
+  other address without an API key. The image sets `SERVE_HOST=0.0.0.0`, because a published port (`-p`) only
+  reaches a server listening on the container's own interfaces, so images built from this commit on need one of:
+  an API key (`-v $KEYFILE:/run/serve-api-key:ro -e SERVE_API_KEY_FILE=/run/serve-api-key`; clients send
+  `Authorization: Bearer <key>`), or `--no-api-key` when the port is published only to the host's loopback as above.
+  With `--network host`, pass `--host 127.0.0.1` instead. In `--dp` mode the replicas stay on 127.0.0.1 and only
+  the proxy listens on `--host`. The pinned image above predates this and ignores `SERVE_API_KEY_FILE`, so keep
+  its port published to 127.0.0.1.
 
 ## Reproduce the numbers and the gates
 

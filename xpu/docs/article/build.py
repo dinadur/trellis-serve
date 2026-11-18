@@ -452,7 +452,7 @@ re-enumeration.</p>
 <p>The registry has one recommended, validated Qwen3.8-27B recipe for the B70:
 <code>qwen38-27b-exl3-4bpw-arcb70-vllm-exl3xpu-tp1</code>. It now enables prefix caching.</p>
 <pre>IMG=ghcr.io/0xsero/exl3xpu@sha256:86276b00c9f0161e7e7ccba1e683ca622679466a5c855e952b375ddbb6ec57c4
-docker run --rm --device /dev/dri -v /dev/dri/by-path:/dev/dri/by-path:ro --shm-size 32g -p 8000:8000 \\
+docker run --rm --device /dev/dri -v /dev/dri/by-path:/dev/dri/by-path:ro --shm-size 32g -p 127.0.0.1:8000:8000 \\
   -e HF_HUB_OFFLINE=1 -v $MODELS/turboderp-Qwen3.8-27B-exl3-4.00bpw:/models:ro $IMG \\
   models/qwen3.8-27b-exl3-4.00bpw --gpu 0 --port 8000 --model-path /models \\
   -- --enable-prefix-caching --enable-auto-tool-choice --tool-call-parser qwen3_coder --reasoning-parser qwen3</pre>

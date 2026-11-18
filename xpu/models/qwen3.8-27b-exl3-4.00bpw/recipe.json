@@ -31,7 +31,7 @@
  },
  "launch": {
   "config": "models/qwen3.8-27b-exl3-4.00bpw/model.yaml",
-  "docker": "docker run --rm --device /dev/dri -v /dev/dri/by-path:/dev/dri/by-path:ro --shm-size 32g -p 8000:8000 -e HF_HUB_OFFLINE=1 -v $MODELS/turboderp-Qwen3.8-27B-exl3-4.00bpw:/models:ro ghcr.io/0xsero/exl3xpu@sha256:21412bdd7535e9c653eeb3d099dce3bc79a83d440def2cd9556111c79c870fa8 models/qwen3.8-27b-exl3-4.00bpw --gpu 0 --port 8000 --model-path /models -- --enable-prefix-caching --enable-auto-tool-choice --tool-call-parser qwen3_coder --reasoning-parser qwen3",
+  "docker": "docker run --rm --device /dev/dri -v /dev/dri/by-path:/dev/dri/by-path:ro --shm-size 32g -p 127.0.0.1:8000:8000 -e HF_HUB_OFFLINE=1 -v $MODELS/turboderp-Qwen3.8-27B-exl3-4.00bpw:/models:ro ghcr.io/0xsero/exl3xpu@sha256:21412bdd7535e9c653eeb3d099dce3bc79a83d440def2cd9556111c79c870fa8 models/qwen3.8-27b-exl3-4.00bpw --gpu 0 --port 8000 --model-path /models -- --enable-prefix-caching --enable-auto-tool-choice --tool-call-parser qwen3_coder --reasoning-parser qwen3",
   "local": "python3 scripts/serve.py models/qwen3.8-27b-exl3-4.00bpw --gpu 0"
  },
  "capabilities": {
